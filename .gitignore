@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.streamlit/secrets.toml
+data/*.json
+*.egg-info/
+.venv/
+venv/
