@@ -1,3 +1,14 @@
+---
+title: CivicSync
+emoji: ⚖️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+license: mit
+short_description: AI legal explainer for Indian legislation
+---
+
 # CivicSync (Policy Explainer)
 
 **CivicSync** is a civic-tech workspace for exploring Indian legislation with **retrieval-grounded AI**, **multi-agent deliberation**, and **ethics-oriented tooling**. It pairs a **FastAPI** backend with a **React + Vite + TypeScript** dashboard (`civicsync-ui`), with an optional **Streamlit** UI for demos.

@@ -7,8 +7,10 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 load_dotenv(override=True)
 
@@ -28,6 +30,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _strip_api_prefix_enabled() -> bool:
+    return os.environ.get("CIVICSYNC_STRIP_API_PREFIX", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+class _StripApiPrefixMiddleware(BaseHTTPMiddleware):
+    """Rewrite /api/* → /* so the SPA can call /api/health like the Vite dev proxy."""
+
+    async def dispatch(self, request: Request, call_next):
+        if _strip_api_prefix_enabled():
+            path = request.scope.get("path", "")
+            if path == "/api" or path.startswith("/api/"):
+                request.scope["path"] = path[4:] if len(path) > 4 else "/"
+        return await call_next(request)
+
+
+if _strip_api_prefix_enabled():
+    app.add_middleware(_StripApiPrefixMiddleware)
 
 BILLS: dict = {}
 RETRIEVERS: dict = {}
@@ -614,7 +639,32 @@ async def courtroom_live_jury_verdict(session_id: str = Query(...)):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+def _mount_static_ui() -> None:
+    """Serve the Vite build from STATIC_DIST with SPA fallback (Docker / HF Spaces)."""
+    static_root = os.environ.get("STATIC_DIST", "").strip()
+    if not static_root or not os.path.isdir(static_root):
+        return
+    index_html = os.path.join(static_root, "index.html")
+    if not os.path.isfile(index_html):
+        print(f"[WARN] STATIC_DIST set but index.html missing: {static_root}")
+        return
+
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    async def serve_spa(spa_path: str):
+        if spa_path:
+            candidate = os.path.join(static_root, spa_path)
+            if os.path.isfile(candidate):
+                return FileResponse(candidate)
+        return FileResponse(index_html)
+
+    print(f"[OK] Serving static UI from {static_root}")
+
+
+_mount_static_ui()
+
+
 if __name__ == "__main__":
     import uvicorn
-    # Match civicsync-ui Vite proxy (vite.config.ts → 127.0.0.1:8005)
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8005, reload=True)
+
+    port = int(os.environ.get("PORT", "8005"))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
