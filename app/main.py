@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-load_dotenv()
+load_dotenv(override=True)
 
 from app.pdf_parser import load_all_bills, BILL_DISPLAY_NAMES, BILL_TAGS, extract_text_from_bytes, chunk_by_section
 from app.retrieval import HybridRetriever
@@ -514,6 +514,104 @@ async def courtroom_session_state(session_id: str):
         "transcript": session.transcript,
         "created_at": session.created_at,
     }
+
+
+# ── Live Courtroom: Gemini 3 + Elasticsearch MCP (Agent Builder) ─────────────
+
+
+class PlanRequest(BaseModel):
+    case_facts: str
+
+
+class ExecuteSearchRequest(BaseModel):
+    session_id: str
+    query_dsl: Optional[dict] = None
+    index: Optional[str] = None
+    run_esql: bool = False
+
+
+class LiveSimulateRequest(BaseModel):
+    session_id: str
+    side: str = "accuser"
+    manual_argument: Optional[str] = ""
+
+
+@app.get("/courtroom/live/infra-status")
+async def courtroom_live_infra_status():
+    """Live telemetry: Elastic MCP health/latency + Gemini config (UI diagnostics console)."""
+    from app.courtroom_live import infra_status
+    return infra_status()
+
+
+@app.post("/courtroom/live/plan")
+async def courtroom_live_plan(req: PlanRequest):
+    """Phase 1: LLM analyzes facts and compiles the Elasticsearch search strategy."""
+    from app.courtroom_live import LiveLLMError, plan_case
+
+    facts = (req.case_facts or "").strip()
+    if len(facts) < 30:
+        raise HTTPException(status_code=400, detail="Please describe the case in more detail (min ~30 characters).")
+    try:
+        return plan_case(facts)
+    except LiveLLMError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/courtroom/live/execute-search")
+async def courtroom_live_execute_search(req: ExecuteSearchRequest):
+    """Phase 2 (post human approval): live Elasticsearch MCP tool execution."""
+    from app.mcp_elastic_client import ElasticMCPError
+    from app.courtroom_live import execute_search
+    from app.courtroom import get_session
+
+    session = get_session(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown session_id. Run /courtroom/live/plan first.")
+    try:
+        return execute_search(session, query_dsl=req.query_dsl, index=req.index, run_esql=req.run_esql)
+    except ElasticMCPError as e:
+        raise HTTPException(status_code=502, detail=f"Elasticsearch MCP error: {e}")
+
+
+@app.post("/courtroom/live/simulate-turn")
+async def courtroom_live_simulate_turn(req: LiveSimulateRequest):
+    """Phase 3: stream a Gemini attorney turn (SSE) + recompute the S_jury verdict."""
+    from app.courtroom import get_session
+    from app.courtroom_live import simulate_turn_stream_live
+
+    session = get_session(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown session_id. Run /courtroom/live/plan first.")
+
+    def event_stream():
+        try:
+            for event in simulate_turn_stream_live(
+                session, side=req.side, manual_argument=req.manual_argument or ""
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:300]})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/courtroom/live/jury-verdict")
+async def courtroom_live_jury_verdict(session_id: str = Query(...)):
+    """Jury Evaluator: S_jury = 0.4*statute + 0.4*precedent + 0.2*factual."""
+    from app.courtroom import get_session
+    from app.courtroom_live import LiveLLMError, compute_jury_verdict_live
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown session_id.")
+    try:
+        return compute_jury_verdict_live(session)
+    except LiveLLMError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 if __name__ == "__main__":

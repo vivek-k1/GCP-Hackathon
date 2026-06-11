@@ -9,6 +9,9 @@ import type {
   CourtroomTurn,
   JuryVerdict,
   CourtroomSide,
+  LivePlanResponse,
+  ExecuteSearchResponse,
+  InfraStatus,
 } from "@/types/api";
 
 const BASE = import.meta.env.VITE_API_URL
@@ -319,21 +322,24 @@ export interface SimulateTurnEvent {
   data?: CourtroomTurn | JuryVerdict;
 }
 
-/** Stream a courtroom turn (SSE): opponent rebuttal deltas + structured turn + jury verdict. */
-export function streamSimulateTurn(
+export interface SimulateTurnCallbacks {
+  onTurnMeta?: (meta: { side: CourtroomSide; role_label: string }) => void;
+  onDelta?: (side: CourtroomSide, text: string) => void;
+  onTurn?: (turn: CourtroomTurn) => void;
+  onVerdict?: (verdict: JuryVerdict) => void;
+  onDone: () => void;
+  onError: (err: Error) => void;
+}
+
+/** Shared SSE reader for courtroom turn streams (Claude + live Gemini pipelines). */
+function streamCourtroomTurn(
+  path: string,
   params: { session_id: string; side: CourtroomSide; manual_argument?: string },
-  callbacks: {
-    onTurnMeta?: (meta: { side: CourtroomSide; role_label: string }) => void;
-    onDelta?: (side: CourtroomSide, text: string) => void;
-    onTurn?: (turn: CourtroomTurn) => void;
-    onVerdict?: (verdict: JuryVerdict) => void;
-    onDone: () => void;
-    onError: (err: Error) => void;
-  }
+  callbacks: SimulateTurnCallbacks
 ): AbortController {
   const controller = new AbortController();
 
-  fetch(`${BASE}/courtroom/simulate-turn`, {
+  fetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -397,4 +403,50 @@ export function streamSimulateTurn(
     });
 
   return controller;
+}
+
+/** Claude/Indian-Kanoon courtroom turn stream. */
+export function streamSimulateTurn(
+  params: { session_id: string; side: CourtroomSide; manual_argument?: string },
+  callbacks: SimulateTurnCallbacks
+): AbortController {
+  return streamCourtroomTurn("/courtroom/simulate-turn", params, callbacks);
+}
+
+// ── Live courtroom: Gemini 3 + Elasticsearch MCP ─────────────────────────────
+
+export function fetchInfraStatus(): Promise<InfraStatus> {
+  return request<InfraStatus>("/courtroom/live/infra-status");
+}
+
+export function planCaseLive(caseFacts: string): Promise<LivePlanResponse> {
+  return request<LivePlanResponse>("/courtroom/live/plan", {
+    method: "POST",
+    body: JSON.stringify({ case_facts: caseFacts }),
+  });
+}
+
+export function executeSearchLive(params: {
+  session_id: string;
+  query_dsl?: Record<string, unknown>;
+  index?: string;
+  run_esql?: boolean;
+}): Promise<ExecuteSearchResponse> {
+  return request<ExecuteSearchResponse>("/courtroom/live/execute-search", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function fetchLiveJuryVerdict(sessionId: string): Promise<JuryVerdict> {
+  const qs = new URLSearchParams({ session_id: sessionId });
+  return request<JuryVerdict>(`/courtroom/live/jury-verdict?${qs}`);
+}
+
+/** Live Gemini courtroom turn stream (Elastic-grounded). */
+export function streamSimulateTurnLive(
+  params: { session_id: string; side: CourtroomSide; manual_argument?: string },
+  callbacks: SimulateTurnCallbacks
+): AbortController {
+  return streamCourtroomTurn("/courtroom/live/simulate-turn", params, callbacks);
 }

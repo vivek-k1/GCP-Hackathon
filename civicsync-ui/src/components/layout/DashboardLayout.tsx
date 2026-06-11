@@ -99,11 +99,14 @@ export function DashboardLayout({
     <div className="flex h-screen overflow-hidden bg-[#0A0A0A]">
       {/* Left Navigation */}
       <nav className="w-16 flex-shrink-0 glass-panel-strong border-r border-zinc-800/50 flex flex-col items-center py-4 gap-1 z-20">
-        {/* Logo */}
-        <div className="mb-4 flex flex-col items-center gap-1">
-          <div className="h-9 w-9 flex items-center justify-center overflow-hidden rounded-xl bg-zinc-900 shadow-lg border border-zinc-800">
-            <img src="/civicsync_icon.png" alt="CivicSync Logo" className="h-full w-full object-cover" />
-          </div>
+        {/* Logo — full width of nav rail (image is landscape) */}
+        <div className="mb-3 w-full px-1.5">
+          <img
+            src="/civicsync_icon.png"
+            alt="CivicSync"
+            className="w-full h-auto"
+            draggable={false}
+          />
         </div>
         
         {/* Nav Items */}
@@ -150,11 +153,14 @@ export function DashboardLayout({
         {/* Top Bar */}
         <header className="h-14 flex-shrink-0 glass-panel-strong border-b border-zinc-800/50 flex items-center justify-between px-6 z-10">
           <div className="flex items-center gap-3">
-            <h1 className="font-display text-base font-bold tracking-tight text-zinc-100">
-              CivicSync
-            </h1>
+            <img
+              src="/civicsync_icon.png"
+              alt="CivicSync"
+              className="h-10 w-auto"
+              draggable={false}
+            />
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 font-semibold uppercase tracking-wider">
-              CBC Hackathon
+              GCP Hackathon
             </span>
           </div>
           <div className="flex items-center gap-3">

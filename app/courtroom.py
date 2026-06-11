@@ -100,6 +100,10 @@ class CourtroomSession:
         self.transcript: List[Dict] = []
         self.created_at = datetime.utcnow().isoformat()
         self._turn_seq = 0
+        # Live (Gemini + Elastic MCP) pipeline metadata
+        self.engine: str = "claude"
+        self.plan: Dict = {}
+        self.diagnostics: Dict = {}
 
     def next_turn_id(self) -> int:
         self._turn_seq += 1
@@ -148,6 +152,9 @@ class CourtroomSession:
             "transcript": self.transcript,
             "created_at": self.created_at,
             "turn_seq": self._turn_seq,
+            "engine": getattr(self, "engine", "claude"),
+            "plan": getattr(self, "plan", {}),
+            "diagnostics": getattr(self, "diagnostics", {}),
         }
 
     @classmethod
@@ -161,6 +168,9 @@ class CourtroomSession:
         s.transcript = d.get("transcript", [])
         s.created_at = d.get("created_at", datetime.utcnow().isoformat())
         s._turn_seq = int(d.get("turn_seq", len(s.transcript)))
+        s.engine = d.get("engine", "claude")
+        s.plan = d.get("plan", {})
+        s.diagnostics = d.get("diagnostics", {})
         s.retriever = None
         s._rebuild_retriever()
         return s
@@ -259,6 +269,146 @@ Return ONLY this JSON (no preamble, no markdown):
 }
 
 Rules: 2-4 issues. kanoon_query must be short keyword phrases (no punctuation). Do not invent section numbers you are unsure of — leave governing_law empty instead."""
+
+
+# ── Live Elastic pipeline (Claude fallback when Gemini unavailable) ───────────
+_PLAN_ELASTIC_PROMPT = """You are the Lead Court Coordinator and Senior Advocate in an Indian legal-tech system.
+You receive a citizen's case facts. Do TWO things and return ONE JSON object:
+
+1) Legal analysis: classify the domain and extract the issues + searchable legal entities.
+2) Search planning: compile a SYNTACTICALLY CORRECT Elasticsearch Query DSL and an ES|QL
+   statement that will retrieve the most relevant prior judgments / statute sections from the
+   target index. The DSL must be the *query* body (a JSON object) suitable for the MCP `search`
+   tool. Favour a bool query mixing `multi_match` (best_fields) over likely text fields
+   (title, text, headline, catchwords) with `should` term boosts on legal entities.
+
+Return ONLY this JSON (no markdown):
+{
+  "domain": "Civil|Criminal|Consumer|Labor|Constitutional|Other",
+  "domain_confidence": <0.0-1.0>,
+  "summary": "<2-3 sentence neutral restatement>",
+  "legal_entities": ["<statute/section/doctrine/party-type keywords>"],
+  "issues": [{"issue": "<point of law>", "governing_law": "<Act/Article/Section or empty>"}],
+  "target_index": "<index or index-pattern to search>",
+  "query_dsl": { "query": { ... valid Elasticsearch query ... }, "size": <int 5-15> },
+  "esql": "<a valid ES|QL statement, e.g. FROM <index> | WHERE ... | KEEP ... | LIMIT 10>",
+  "search_rationale": "<1-2 sentences on why this query finds the right precedents>"
+}
+
+Rules: 2-4 issues. query_dsl MUST be valid JSON. Use the provided DEFAULT_INDEX as target_index
+unless the facts clearly imply another. Never invent section numbers you are unsure of."""
+
+
+def claude_configured() -> bool:
+    return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+
+
+def claude_status() -> dict:
+    return {
+        "configured": claude_configured(),
+        "model": COURTROOM_MODEL,
+        "jury_model": JURY_MODEL,
+    }
+
+
+def analyze_and_plan_elastic(case_facts: str, default_index: str) -> dict:
+    """Claude: legal analysis + Elasticsearch Query DSL (live courtroom fallback)."""
+    if not claude_configured():
+        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+    facts = (case_facts or "").strip()[:6000]
+    user = (
+        f"DEFAULT_INDEX: {default_index}\n\n"
+        f"CASE FACTS:\n{facts}\n\n"
+        "Analyse and produce the search plan as the specified JSON."
+    )
+    resp = _get_client().messages.create(
+        model=COURTROOM_MODEL,
+        max_tokens=1800,
+        temperature=0,
+        system=_PLAN_ELASTIC_PROMPT,
+        messages=[{"role": "user", "content": user}],
+    )
+    tracker.log_call(COURTROOM_MODEL, resp.usage.input_tokens, resp.usage.output_tokens)
+    plan = _extract_json(resp.content[0].text) or {}
+    plan.setdefault("domain", "Other")
+    plan.setdefault("domain_confidence", 0.5)
+    plan.setdefault("summary", facts[:300])
+    plan.setdefault("legal_entities", [])
+    plan.setdefault("issues", [])
+    plan.setdefault("target_index", default_index)
+    plan.setdefault(
+        "query_dsl",
+        {"query": {"multi_match": {"query": facts[:200], "fields": ["*"]}}, "size": 10},
+    )
+    plan.setdefault("esql", f"FROM {plan.get('target_index', default_index)} | LIMIT 10")
+    plan.setdefault("search_rationale", "")
+    return plan
+
+
+def argue_stream_elastic(
+    side: str,
+    case_facts: str,
+    domain: str,
+    precedent_block: str,
+    transcript_block: str,
+    opponent_argument: str,
+) -> Generator[str, None, None]:
+    """Yield text deltas of the attorney's argument (Claude streaming)."""
+    if not claude_configured():
+        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+    user = (
+        f"DOMAIN: {domain}\n"
+        f"CASE FACTS:\n{case_facts[:2500]}\n\n"
+        f"RETRIEVED PRECEDENTS (cite by exact docid only):\n{precedent_block}\n\n"
+        f"COURTROOM SO FAR:\n{transcript_block}\n\n"
+        + (
+            f"OPPOSING COUNSEL JUST ARGUED:\n{opponent_argument[:1500]}\n\nDeliver your rebuttal now."
+            if opponent_argument
+            else "Deliver your opening argument now."
+        )
+    )
+    try:
+        with _get_client().messages.stream(
+            model=COURTROOM_MODEL,
+            max_tokens=1200,
+            temperature=0.4,
+            system=_build_argument_system(side),
+            messages=[{"role": "user", "content": user}],
+        ) as stream:
+            for delta in stream.text_stream:
+                yield delta
+    except Exception as e:
+        raise RuntimeError(f"Claude argument stream failed: {e}") from e
+
+
+def score_jury_elastic(
+    case_facts: str,
+    authorities_block: str,
+    accuser_block: str,
+    defense_block: str,
+) -> dict:
+    """Claude jury scoring (same schema as Gemini score_jury)."""
+    if not claude_configured():
+        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+    user = (
+        f"CASE FACTS:\n{case_facts[:2000]}\n\n"
+        f"GROUNDED AUTHORITIES (the ONLY valid precedents):\n{authorities_block}\n\n"
+        f"ACCUSER (Plaintiff/Prosecution) ARGUMENTS:\n{accuser_block}\n\n"
+        f"DEFENCE ARGUMENTS:\n{defense_block}\n\n"
+        "Score both sides and flag any unsupported citation. Return ONLY the JSON."
+    )
+    resp = _get_client().messages.create(
+        model=JURY_MODEL,
+        max_tokens=1100,
+        temperature=0,
+        system=_JURY_PROMPT,
+        messages=[{"role": "user", "content": user}],
+    )
+    tracker.log_call(JURY_MODEL, resp.usage.input_tokens, resp.usage.output_tokens)
+    parsed = _extract_json(resp.content[0].text)
+    if parsed is None:
+        raise RuntimeError("Claude did not return valid JSON for jury scoring.")
+    return parsed
 
 
 def analyze_case(case_facts: str) -> dict:

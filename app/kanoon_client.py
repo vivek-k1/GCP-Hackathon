@@ -320,6 +320,11 @@ _DEMO_CORPUS: List[Dict] = [
 ]
 
 
+def demo_corpus() -> List[Dict]:
+    """Demo precedents for Elastic seeding when the cluster has no live Kanoon data."""
+    return list(_DEMO_CORPUS)
+
+
 # Module-level singleton, lazily created
 _kanoon_client: Optional[IndianKanoonClient] = None
 

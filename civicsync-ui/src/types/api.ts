@@ -279,3 +279,92 @@ export interface RetrieveResponse {
   precedents: Precedent[];
   indexed: boolean;
 }
+
+// ── Live courtroom: Gemini 3 + Elasticsearch MCP ─────────────────────────────
+
+export interface CourtroomPlan {
+  domain: string;
+  domain_confidence: number;
+  summary: string;
+  legal_entities: string[];
+  issues: LegalIssue[];
+  target_index: string;
+  query_dsl: Record<string, unknown>;
+  esql: string;
+  search_rationale: string;
+}
+
+export interface LivePlanResponse {
+  session_id: string;
+  analysis: CaseAnalysis;
+  plan: CourtroomPlan;
+  engine?: "gemini" | "claude";
+}
+
+export interface DiagnosticStep {
+  tool: string;
+  ms: number;
+  count?: number;
+  field_count?: number;
+  hit_count?: number;
+}
+
+export interface ElasticDiagnostics {
+  index: string;
+  endpoint: string;
+  query_dsl: Record<string, unknown>;
+  esql: string;
+  steps: DiagnosticStep[];
+  protocol_version?: string;
+  server_info?: Record<string, unknown>;
+  indices_sample?: string[];
+  total_ms?: number;
+  hit_count?: number;
+  completed_at?: string;
+  esql_result?: string;
+  mappings_warning?: string;
+  esql_warning?: string;
+}
+
+export interface ExecuteSearchResponse {
+  precedents: Precedent[];
+  diagnostics: ElasticDiagnostics;
+}
+
+export interface ElasticHealth {
+  connected: boolean;
+  configured: boolean;
+  endpoint: string;
+  space?: string;
+  protocol_version?: string;
+  server_info?: Record<string, unknown>;
+  session_id?: string;
+  latency_ms?: number;
+  tools?: string[];
+  error?: string;
+  status_code?: number;
+}
+
+export interface GeminiStatus {
+  configured: boolean;
+  sdk_installed: boolean;
+  model: string;
+  use_pro?: boolean;
+  pro_model?: string;
+  fast_model: string;
+}
+
+export interface ClaudeStatus {
+  configured: boolean;
+  model: string;
+  jury_model: string;
+}
+
+export interface InfraStatus {
+  elastic: ElasticHealth;
+  gemini: GeminiStatus;
+  claude?: ClaudeStatus;
+  llm_fallback?: string;
+  weights: { statute: number; precedent: number; factual: number };
+  default_index: string;
+}

@@ -5,7 +5,7 @@ import { PolicyConsensusMap } from "@/components/consensus/PolicyConsensusMap";
 import { PersonalImpactCalculator } from "@/components/impact/PersonalImpactCalculator";
 import { EthicalAuditPanel } from "@/components/ethics/EthicalAuditPanel";
 import { SimulationSandbox } from "@/components/sandbox/SimulationSandbox";
-import { CourtroomSimulator } from "@/components/courtroom/CourtroomSimulator";
+import { LiveCourtroom } from "@/components/courtroom/LiveCourtroom";
 import { StateBillsBrowser } from "@/components/features/StateBillsBrowser";
 import { RightsChecker } from "@/components/features/RightsChecker";
 import { CrossBillAnalysis } from "@/components/features/CrossBillAnalysis";
@@ -39,7 +39,7 @@ export default function App() {
       {activeTab === "deliberation" && (
         <AgentDeliberationWorkspace onSummaryReady={handleSummaryReady} />
       )}
-      {activeTab === "courtroom" && <CourtroomSimulator />}
+      {activeTab === "courtroom" && <LiveCourtroom />}
       {activeTab === "statebills" && <StateBillsBrowser />}
       {activeTab === "rights" && <RightsChecker />}
       {activeTab === "crossbill" && <CrossBillAnalysis />}

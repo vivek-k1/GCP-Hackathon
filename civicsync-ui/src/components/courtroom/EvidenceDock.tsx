@@ -92,11 +92,23 @@ export function EvidenceDock({
   precedents,
   kanoonLive,
   citedDocids,
+  sourceLabel,
+  live,
+  emptyHint,
 }: {
   precedents: Precedent[];
-  kanoonLive: boolean;
   citedDocids: Set<string>;
+  /** Legacy Kanoon pipeline flag */
+  kanoonLive?: boolean;
+  /** Source-agnostic badge label (e.g. "Elasticsearch · live") */
+  sourceLabel?: string;
+  /** Whether the source is live (controls badge colour) */
+  live?: boolean;
+  emptyHint?: string;
 }) {
+  const isLive = live ?? kanoonLive ?? false;
+  const badge = sourceLabel ?? (kanoonLive ? "Indian Kanoon · live" : "Demo corpus");
+
   return (
     <div className="glass-panel rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
@@ -106,24 +118,24 @@ export function EvidenceDock({
         <span
           className={cn(
             "text-[9px] font-semibold rounded-full px-2 py-0.5",
-            kanoonLive ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"
+            isLive ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"
           )}
         >
-          {kanoonLive ? "Indian Kanoon · live" : "Demo corpus"}
+          {badge}
         </span>
       </div>
 
       {precedents.length === 0 ? (
-        <p className="text-xs text-zinc-600">No precedents retrieved yet.</p>
+        <p className="text-xs text-zinc-600">{emptyHint ?? "No precedents retrieved yet."}</p>
       ) : (
         <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-          {precedents.map((p) => (
-            <PrecedentCard key={p.docid} precedent={p} cited={citedDocids.has(p.docid)} />
+          {precedents.map((p, i) => (
+            <PrecedentCard key={p.docid || i} precedent={p} cited={citedDocids.has(p.docid)} />
           ))}
         </div>
       )}
 
-      {!kanoonLive && (
+      {kanoonLive === false && sourceLabel === undefined && (
         <p className="text-[10px] text-zinc-600 leading-relaxed">
           Set <code className="text-zinc-500">INDIAN_KANOON_API_TOKEN</code> on the backend to pull
           live verdicts. The demo corpus uses paraphrased landmark judgments for simulation only.
